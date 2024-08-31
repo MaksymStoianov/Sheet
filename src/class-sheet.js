@@ -27,7 +27,7 @@
 /**
  * @class               Sheet
  * @namespace           Sheet
- * @version             1.2.0
+ * @version             1.3.0
  * @author              Maksym Stoianov <stoianov.maksym@gmail.com>
  * @license             MIT
  * @tutorial            https://maksymstoianov.com/
@@ -1011,6 +1011,10 @@ class Sheet {
    * @param {boolean} [options.displayValues = false] 
    * @param {boolean} [options.includeFrozenRows = false] 
    * @param {boolean} [options.includeFrozenCols = false] 
+   * @param {boolean} [options.includeRowsHiddenByFilter = false] 
+   * @param {boolean} [options.includeRowsHiddenByFilterView = false] 
+   * @param {boolean} [options.includeRowsHiddenByUser = false] 
+   * @param {boolean} [options.includeColumnsHiddenByUser = false] 
    * @param {string} [options.output = 'ARRAY'] Формат вывода.
    * Возможные значения:
    * - `ARRAY`: данные будут представлены в виде двумерного массива.
@@ -1035,7 +1039,6 @@ class Sheet {
    */
   getValues(options = {}) {
     const sheet = this._sheet;
-
 
     const frozenRows = sheet?.getFrozenRows();
 
@@ -1100,16 +1103,71 @@ class Sheet {
     }
 
 
+    const filter = sheet.getFilter();
+    const rowsHidden = {};
+    const colsHidden = {};
     const rows = {};
 
     for (const [i, rowValues] of values.entries()) {
       const rowIndex = i + (options.includeFrozenRows !== true ? frozenRows : 0);
+      const rowPosition = rowIndex + 1;
+
+
+      // Обойти отфильтрованные строки?
+      if (options.includeRowsHiddenByFilter !== true && filter) {
+        if (!(rowPosition in rowsHidden)) {
+          rowsHidden[rowPosition] = sheet.isRowHiddenByFilter(rowPosition);
+        }
+
+        if (rowsHidden[rowPosition] === true) {
+          continue;
+        }
+      }
+
+
+      // Обойти отфильтрованные строки?
+      if (options.includeRowsHiddenByFilterView !== true) {
+        // TODO 
+        if (!(rowPosition in rowsHidden)) {
+          rowsHidden[rowPosition] = sheet.isRowHiddenByFilter(rowPosition);
+        }
+
+        if (rowsHidden[rowPosition] === true) {
+          continue;
+        }
+      }
+
+
+      // Обойти скрытые пользователем строки?
+      if (options.includeRowsHiddenByUser !== true) {
+        if (!(rowPosition in rowsHidden)) {
+          rowsHidden[rowPosition] = sheet.isRowHiddenByUser(rowPosition);
+        }
+
+        if (rowsHidden[rowPosition] === true) {
+          continue;
+        }
+      }
+
 
       const cols = {};
 
       for (const [i, cellValue] of rowValues.entries()) {
         const colIndex = i + (options.includeFrozenCols !== true ? frozenCols : 0);
+        const colPosition = colIndex + 1;
         let colName;
+
+
+        // Обойти скрытые пользователем столбцы?
+        if (options.includeColumnsHiddenByUser !== true) {
+          if (!(colPosition in colsHidden)) {
+            colsHidden[colPosition] = sheet.isColumnHiddenByUser(colPosition);
+          }
+
+          if (colsHidden[colPosition] === true) {
+            continue;
+          }
+        }
 
         if (options.colNaming === 'FIELD_NAME') {
           colName = (sheet?.schema?.getFieldByIndex(colIndex)?._values?.name ?? null);
@@ -1120,11 +1178,11 @@ class Sheet {
         }
 
         else if (options.colNaming === 'POSITION') {
-          colName = `${colIndex + 1}`;
+          colName = `${colPosition}`;
         }
 
         else if (options.colNaming === 'COLUMN_LABEL') {
-          const columnLabel = Sheet.getColumnLabelByPosition(colIndex + 1);
+          const columnLabel = Sheet.getColumnLabelByPosition(colPosition);
 
           colName = (columnLabel ? `Col${columnLabel}` : null);
         }
@@ -1134,7 +1192,7 @@ class Sheet {
         }
 
         if (options.colNaming === 'COLUMN_POSITION' || !colName) {
-          colName = `Col${colIndex + 1}`;
+          colName = `Col${colPosition}`;
         }
 
         const cell = Sheet.newCell(rowIndex, colIndex, cellValue);
@@ -1150,7 +1208,7 @@ class Sheet {
       }
 
       else if (options.rowNaming === 'POSITION') {
-        rowName = `${rowIndex + 1}`;
+        rowName = `${rowPosition}`;
       }
 
       else if (options.rowNaming === 'ROW_INDEX') {
@@ -1158,7 +1216,7 @@ class Sheet {
       }
 
       if (options.rowNaming === 'ROW_POSITION' || !rowName) {
-        rowName = `Row${rowIndex + 1}`;
+        rowName = `Row${rowPosition}`;
       }
 
       rows[rowName] = cols;
