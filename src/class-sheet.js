@@ -1108,45 +1108,32 @@ class Sheet {
     const colsHidden = {};
     const rows = {};
 
+    console.log('filter:', filter);
+
     for (const [i, rowValues] of values.entries()) {
       const rowIndex = i + (options.includeFrozenRows !== true ? frozenRows : 0);
       const rowPosition = rowIndex + 1;
 
 
-      // Обойти отфильтрованные строки?
+      // Найти отфильтрованные строки?
       if (options.includeRowsHiddenByFilter !== true && filter) {
-        if (!(rowPosition in rowsHidden)) {
+        if (!rowsHidden[rowPosition]) {
           rowsHidden[rowPosition] = sheet.isRowHiddenByFilter(rowPosition);
-        }
-
-        if (rowsHidden[rowPosition] === true) {
-          continue;
         }
       }
 
 
-      // Обойти отфильтрованные строки?
-      if (options.includeRowsHiddenByFilterView !== true) {
-        // TODO 
-        if (!(rowPosition in rowsHidden)) {
-          rowsHidden[rowPosition] = sheet.isRowHiddenByFilter(rowPosition);
-        }
-
-        if (rowsHidden[rowPosition] === true) {
-          continue;
-        }
-      }
-
-
-      // Обойти скрытые пользователем строки?
+      // Найти скрытые пользователем строки?
       if (options.includeRowsHiddenByUser !== true) {
-        if (!(rowPosition in rowsHidden)) {
+        if (!rowsHidden[rowPosition]) {
           rowsHidden[rowPosition] = sheet.isRowHiddenByUser(rowPosition);
         }
+      }
 
-        if (rowsHidden[rowPosition] === true) {
-          continue;
-        }
+
+      // Обойти скрытые строки
+      if (rowsHidden[rowPosition] === true) {
+        continue;
       }
 
 
@@ -1157,16 +1144,16 @@ class Sheet {
         const colPosition = colIndex + 1;
         let colName;
 
-
-        // Обойти скрытые пользователем столбцы?
+        // Найти скрытые пользователем столбцы?
         if (options.includeColumnsHiddenByUser !== true) {
-          if (!(colPosition in colsHidden)) {
+          if (!colsHidden[colPosition]) {
             colsHidden[colPosition] = sheet.isColumnHiddenByUser(colPosition);
           }
+        }
 
-          if (colsHidden[colPosition] === true) {
-            continue;
-          }
+        // Обойти скрытые столбцы
+        if (colsHidden[colPosition] === true) {
+          continue;
         }
 
         if (options.colNaming === 'FIELD_NAME') {
