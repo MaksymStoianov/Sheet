@@ -27,7 +27,7 @@
 /**
  * @class               Sheet
  * @namespace           Sheet
- * @version             1.3.0
+ * @version             1.5.1
  * @author              Maksym Stoianov <stoianov.maksym@gmail.com>
  * @license             MIT
  * @tutorial            https://maksymstoianov.com/
@@ -36,7 +36,7 @@
 class Sheet {
 
   /**
-   * Пазбирает строку `A1Notation`, возможно с преобразованием получаемого в процессе разбора значения.
+   * Разбирает строку `A1Notation`, возможно с преобразованием получаемого в процессе разбора значения.
    * 
    * #### Example 1
    * ```javascript
@@ -64,11 +64,13 @@ class Sheet {
    * @return {Object}
    */
   static parseA1Notation(input, reviver) {
-    if (!arguments.length)
-      throw new Error(`The parameters () do not match the signature for ${this.name}.`);
+    if (!arguments.length) {
+      throw new Error(`The parameters () do not match the signature for ${this.name}.parseA1Notation.`);
+    }
 
-    if (!this.RegExp.A1NOTATION.test(input))
+    if (!this.RegExp.A1NOTATION.test(input)) {
       throw new SyntaxError(`Разбираемая строка не является правильным A1Notation.`);
+    }
 
     input = input
       .replace(/:$/, '')
@@ -89,13 +91,15 @@ class Sheet {
      * @return {Integer}
      */
     const _toInteger = input => {
-      if (input === null || input === undefined)
+      if (input === null || input === undefined) {
         return null;
+      }
 
       const parsed = parseInt(input, 10);
 
-      if (isNaN(parsed))
+      if (isNaN(parsed)) {
         return null;
+      }
 
       return parsed;
     };
@@ -233,6 +237,327 @@ class Sheet {
 
 
   /**
+   * Преобразует `RichTextValue` в HTML, сохраняя форматирование текста.
+   * 
+   * #### Example
+   * ```javascript
+   * const sheet = new Sheet('Лист1');
+   * const range = sheet.getRange('A1');
+   * const richTextValue = range.getRichTextValue();
+   * const html = Sheet.convertRichTextToHtml(richTextValue);
+   * 
+   * console.log(html);
+   * ```
+   * @param {SpreadsheetApp.RichTextValue} input Объект `RichTextValue`, содержащий текст с форматированием.
+   * @return {string} HTML-код, представляющий форматированный текст.
+   */
+  static convertRichTextToHtml(input) {
+    if (!arguments.length) {
+      throw new Error(`The parameters () do not match the signature for ${this.name}.convertRichTextToHtml.`);
+    }
+
+    if (!this.isRichTextValue(input)) {
+      throw new TypeError('Ожидается объект типа "RichTextValue".');
+    }
+
+    const runs = input.getRuns();
+    let html = '';
+
+
+    /**
+     * @param {Object} input
+     */
+    const _toStringStyles = input => Object
+      .entries(input)
+      .map(([key, value]) => `${key}: ${value}`)
+      .join('; ');
+
+
+    /**
+     * @param {Object} input
+     */
+    const _toStringAttrs = input => Object
+      .entries(input)
+      .map(([key, value]) => `${key}="${value}"`)
+      .join(' ');
+
+
+    for (const run of runs) {
+      const textStyle = run.getTextStyle();
+      const attributes = {};
+      const styles = {};
+      let tags = [];
+
+      // Применение форматирования стиля
+      const fontFamily = textStyle.getFontFamily();
+
+      if (textStyle.isStrikethrough()) {
+        tags.push('s');
+      }
+
+      if (textStyle.isUnderline()) {
+        tags.push('u');
+      }
+
+      if (textStyle.isBold()) {
+        tags.push('b');
+      }
+
+      if (textStyle.isItalic()) {
+        tags.push('i');
+      }
+
+      if (fontFamily !== 'Arial') {
+        styles['font-family'] = fontFamily;
+      }
+
+      const fontSize = textStyle.getFontSize();
+
+      if (fontSize !== 10) {
+        styles['font-size'] = `${fontSize}px`;
+      }
+
+      const color = textStyle.getForegroundColor();
+
+      if (!['#000000', '#000', 'black'].includes(color)) {
+        styles['color'] = color;
+      }
+
+      const href = run.getLinkUrl();
+
+      let tag = 'span';
+
+      if (href) {
+        tag = 'a';
+        attributes['href'] = href;
+      } else if (tags.length) {
+        tag = tags.pop();
+      }
+
+      if (Object.keys(styles).length) {
+        attributes['style'] = _toStringStyles(styles);
+      }
+
+      // Формируем HTML строку
+      html += Utilities.formatString(
+        `<%s%s>%s%s%s</%s>`,
+        tag,
+        (Object.keys(attributes).length ? ` ${_toStringAttrs(attributes)}` : ''),
+        (tags.length ? `<${tags.join('><')}>` : ''),
+        run.getText().replace(/\r?\n|\r/g, '<br>'),
+        (tags.length ? `</${tags.reverse().join('></')}>` : ''),
+        tag
+      );
+    }
+
+    return html;
+  }
+
+
+
+  /**
+   * Настройки шрифта и цвета.
+   * @typedef {Object} FontSettings
+   * @property {string} [font] Шрифт для текста.
+   * @property {string} [color] Цвет текста.
+   * @property {string} [style] Стиль текста (`'normal'` или `'italic'`).
+   * @property {string} [weight] Толщина шрифта (`'normal'` или `'bold'`).
+   * @property {string} [decoration] Дополнительное оформление (`'underline'` или `'line-through'`).
+   * @property {Integer} [size] Размер шрифта.
+   */
+  /**
+   * Применяет форматирование HTML-кода в ячейках Google Sheets, используя тему для цвета и шрифта.
+   * 
+   * #### Пример
+   * ```javascript
+   * const sheet = new Sheet('Лист1');
+   * const range = sheet.getRange('A1:A5');
+   * const theme = {
+   *   text: {
+   *     font: 'Open Sans',
+   *     color: '#3c4043'
+   *   },
+   *   tag: {
+   *     font: 'Open Sans',
+   *     color: '#185abc'
+   *   },
+   *   attrName: {
+   *     font: 'Open Sans',
+   *     color: '#098591'
+   *   },
+   *   attrValue: {
+   *     font: 'Open Sans',
+   *     color: '#b31412'
+   *   },
+   *   comment: {
+   *     font: 'Open Sans',
+   *     color: '#137333'
+   *   }
+   * };
+   * 
+   * Sheet.highlightHtml(range, theme);
+   * ```
+   * @param {SpreadsheetApp.Range} range Диапазон ячеек Google Sheets, содержащий HTML-код, который нужно форматировать.
+   * @param {Object} [theme = {}] Объект с настройками темы, где можно задать шрифт и цвета для текста, тегов и атрибутов.
+   * @param {FontSettings} [theme.text = {}] Настройки текста.
+   * @param {FontSettings} [theme.tag = {}] Настройки для HTML-тегов.
+   * @param {FontSettings} [theme.attrName = {}] Настройки для названий атрибутов.
+   * @param {FontSettings} [theme.attrValue = {}] Настройки для значений атрибутов.
+   * @param {FontSettings} [theme.comment = {}] Настройки для HTML-комментариев.
+   * @return {SpreadsheetApp.Range}
+   */
+  static highlightHtml(range, theme = {}) {
+    if (!arguments.length) {
+      throw new Error(`The parameters () do not match the signature for ${this.name}.highlightHtml.`);
+    }
+
+    if (!this.isRange(range)) {
+      throw new TypeError('Необходимо передать диапазон ячеек (SpreadsheetApp.Range).');
+    }
+
+
+    /**
+     * Преобразует HTML-код в форматированный текст для Google Sheets.
+     * @param {string} html HTML-код для преобразования.
+     * @return {SpreadsheetApp.RichTextValue} Форматированный текст.
+     */
+    const _convertHtmlTagsToRichText = (html, theme) => {
+      const richTextBuilder = SpreadsheetApp
+        .newRichTextValue();
+
+      if (!(typeof html === 'string' && html.trim().length)) {
+        return richTextBuilder
+          .setText('')
+          .build();
+      }
+
+      richTextBuilder.setText(html);
+
+      // Применение стиля для всего текста
+      richTextBuilder.setTextStyle(0, html.length, theme.text);
+
+      // Регулярное выражение для поиска тегов, атрибутов и их значений
+      // const tagRegex = /<\/?[a-z0-9]+|(\s+[a-z-]+)="([^"]*)"|>/gi;
+      // Регулярное выражение для поиска тегов, атрибутов, значений и комментариев
+      const tagRegex = /<!--[\s\S]*?-->|<\/?[a-z0-9]+|(\s+[a-z-]+)="([^"]*)"|>/gi;
+      let match;
+
+      while ((match = tagRegex.exec(html)) !== null) {
+        const matchText = match[0];
+
+        if (matchText.startsWith('<!--') && matchText.endsWith('-->')) {
+          // Стиль для комментариев
+          richTextBuilder.setTextStyle(match.index, match.index + matchText.length, theme.comment);
+        }
+
+        else if (matchText.startsWith('<') || matchText.startsWith('</') || matchText.endsWith('>')) {
+          // Стиль для тега
+          richTextBuilder.setTextStyle(match.index, match.index + matchText.length, theme.tag);
+        }
+
+        else if (match[1]) {
+          // Стиль для названия атрибута, "=" и кавычек
+          const attrNameEndIndex = match.index + match[1].length;
+          const attrValueEndIndex = match.index + matchText.length; // Включая закрывающую кавычку
+          richTextBuilder.setTextStyle(match.index, attrValueEndIndex, theme.attrName);
+
+          // Стиль для значения атрибута
+          const attrValueStartIndex = attrNameEndIndex + '="'.length;
+          richTextBuilder.setTextStyle(attrValueStartIndex, attrValueEndIndex - 1, theme.attrValue);
+        }
+      }
+
+      return richTextBuilder.build();
+    };
+
+
+    const defaultTheme = {
+      text: {
+        font: 'Arial',
+        size: 10,
+        color: '#000000',
+        style: 'normal',
+        weight: 'normal',
+        decoration: 'none'
+      },
+      tag: {
+        font: 'Arial',
+        size: 10,
+        color: '#8e004b',
+        style: 'normal',
+        weight: 'normal',
+        decoration: 'none'
+      },
+      attrName: {
+        font: 'Arial',
+        size: 10,
+        color: '#9f4311',
+        style: 'normal',
+        weight: 'normal',
+        decoration: 'none'
+      },
+      attrValue: {
+        font: 'Arial',
+        size: 10,
+        color: '#0742a0',
+        style: 'normal',
+        weight: 'normal',
+        decoration: 'none'
+      },
+      comment: {
+        font: 'Arial',
+        size: 10,
+        color: '#808080',
+        style: 'normal',
+        weight: 'normal',
+        decoration: 'none'
+      }
+    };
+
+
+    // Объединяем заданную тему с темой по умолчанию
+    theme = {
+      ...defaultTheme,
+      ...theme,
+      text: { ...defaultTheme.text, ...theme.text },
+      tag: { ...defaultTheme.tag, ...theme.tag },
+      attrName: { ...defaultTheme.attrName, ...theme.attrName },
+      attrValue: { ...defaultTheme.attrValue, ...theme.attrValue },
+      comment: { ...defaultTheme.comment, ...theme.comment }
+    };
+
+    for (const key in theme) {
+      if (!defaultTheme[key]) continue;
+
+      theme[key] = SpreadsheetApp
+        .newTextStyle()
+        .setFontFamily(theme[key].font)
+        .setFontSize(theme[key].size)
+        .setForegroundColor(theme[key].color)
+        .setItalic(theme[key].style === 'italic')
+        .setBold(theme[key].weight === 'bold')
+        .setUnderline(theme[key].decoration === 'underline')
+        .setStrikethrough(theme[key].decoration === 'line-through')
+        .build();
+    }
+
+    const richTextValues = range
+      .getDisplayValues()
+      .map(cells => cells.map(cell => _convertHtmlTagsToRichText(cell, theme)));
+
+    // Устанавливаем форматированный текст обратно в ячейки
+    if (range.getNumRows() === 1 && range.getNumColumns() === 1) {
+      range.setRichTextValue(richTextValues[0][0]);
+    } else {
+      range.setRichTextValues(richTextValues);
+    }
+
+    return range;
+  }
+
+
+
+  /**
    * Преобразует метку столбца (букву или комбинацию букв) в номер столбца.
    * 
    * #### Example 1
@@ -241,18 +566,26 @@ class Sheet {
    * console.log(Sheet.getColumnPositionByLabel('AA'));  // Вывод: 27
    * console.log(Sheet.getColumnPositionByLabel('AZ'));  // Вывод: 52
    * ```
-   * @param {string} columnLabel Метка столбца (например, 'A', 'B', ..., 'AA').
+   * @param {string} columnLabel Метка столбца (например, `'A'`, `'B'`, ..., `'AA'`).
    * @return {Integer} Номер столбца.
    */
   static getColumnPositionByLabel(columnLabel) {
-    let column = 0;
+    if (!arguments.length) {
+      throw new Error(`The parameters () do not match the signature for ${this.name}.getColumnPositionByLabel.`);
+    }
+
+    if (!(typeof columnLabel === 'string' && columnLabel.length)) {
+      throw new TypeError(`Invalid argument.`);
+    }
+
+    let columnPosition = 0;
     const length = columnLabel.length;
 
     for (let i = 0; i < length; i++) {
-      column += (columnLabel.charCodeAt(i) - 64) * Math.pow(26, length - i - 1);
+      columnPosition += (columnLabel.charCodeAt(i) - 64) * Math.pow(26, length - i - 1);
     }
 
-    return column;
+    return (columnPosition > 0 ? columnPosition : null);
   }
 
 
@@ -266,10 +599,18 @@ class Sheet {
    * console.log(Sheet.getColumnLabelByPosition(27));  // Вывод: AA
    * console.log(Sheet.getColumnLabelByPosition(52));  // Вывод: AZ
    * ```
-   * @param {Integer} columnPosition Позиция столбца, начиная с 1.
+   * @param {Integer} columnPosition Позиция столбца, начиная с `1`.
    * @return {string} Метка столбца, соответствующая указанной позиции.
    */
   static getColumnLabelByPosition(columnPosition) {
+    if (!arguments.length) {
+      throw new Error(`The parameters () do not match the signature for ${this.name}.getColumnLabelByPosition.`);
+    }
+
+    if (!(Number.isInteger(columnPosition) && columnPosition > 0)) {
+      throw new TypeError(`Invalid argument.`);
+    }
+
     let columnLabel = '';
 
     while (columnPosition > 0) {
@@ -278,7 +619,7 @@ class Sheet {
       columnPosition = Math.floor((columnPosition - 1) / 26);
     }
 
-    return columnLabel;
+    return (columnLabel.length ? columnLabel : null);
   }
 
 
@@ -307,8 +648,9 @@ class Sheet {
    * @return {boolean}
    */
   static isSpreadsheet(input) {
-    if (!arguments.length)
+    if (!arguments.length) {
       throw new Error(`The parameters () don't match any method signature for ${this.name}.isSpreadsheet.`);
+    }
 
     return (
       input === Object(input) &&
@@ -324,8 +666,9 @@ class Sheet {
    * @return {boolean}
    */
   static isSheet(input) {
-    if (!arguments.length)
+    if (!arguments.length) {
       throw new Error(`The parameters () don't match any method signature for ${this.name}.isSheet.`);
+    }
 
     return (
       input === Object(input) &&
@@ -341,8 +684,9 @@ class Sheet {
    * @return {boolean}
    */
   static isSheetLike(input) {
-    if (!arguments.length)
+    if (!arguments.length) {
       throw new Error(`The parameters () don't match any method signature for ${this.name}.isSheetLike.`);
+    }
 
     return (input instanceof this);
   }
@@ -355,12 +699,88 @@ class Sheet {
    * @return {boolean}
    */
   static isRange(input) {
-    if (!arguments.length)
+    if (!arguments.length) {
       throw new Error(`The parameters () don't match any method signature for ${this.name}.isRange.`);
+    }
 
     return (
       input === Object(input) &&
       input?.toString() === 'Range'
+    );
+  }
+
+
+
+  /**
+   * Проверяет, является ли заданное значение объектом типа [`RichTextValue`](https://developers.google.com/apps-script/reference/spreadsheet/rich-text-value).
+   * @param {*} input Значение для проверки.
+   * @return {boolean}
+   */
+  static isRichTextValue(input) {
+    if (!arguments.length) {
+      throw new Error(`The parameters () don't match any method signature for ${this.name}.isRichTextValue.`);
+    }
+
+    return (
+      input === Object(input) &&
+      input?.toString() === 'RichTextValue'
+    );
+  }
+
+
+
+  /**
+   * Проверяет, является ли заданное значение объектом типа [`TextStyle`](https://developers.google.com/apps-script/reference/spreadsheet/text-style).
+   * @param {*} input Значение для проверки.
+   * @return {boolean}
+   */
+  static isTextStyle(input) {
+    if (!arguments.length) {
+      throw new Error(`The parameters () don't match any method signature for ${this.name}.isTextStyle.`);
+    }
+
+    return (
+      input === Object(input) &&
+      input?.toString() === 'TextStyle'
+    );
+  }
+
+
+
+  /**
+   * @param {*} input 
+   * @return {boolean}
+   */
+  static isValidSpreadsheetId(input) {
+    return (
+      typeof input === 'string' &&
+      input.length > 10
+    );
+  }
+
+
+
+  /**
+   * @param {*} input 
+   * @return {boolean}
+   */
+  static isValidSheetName(input) {
+    return (
+      typeof input === 'string' &&
+      input.length
+    );
+  }
+
+
+
+  /**
+   * @param {*} input 
+   * @return {boolean}
+   */
+  static isValidSheetId(input) {
+    return (
+      Number.isInteger(input) &&
+      input >= 0
     );
   }
 
@@ -560,8 +980,9 @@ class Sheet {
    * @param {Array} fields Поля схемы по умолчанию.
    */
   constructor(...args) {
-    if (!args.length)
+    if (!args.length) {
       throw new Error(`The parameters () do not match the signature for ${this.constructor.name}.`);
+    }
 
 
     /**
@@ -591,7 +1012,7 @@ class Sheet {
 
     /**
      * @param {SpreadsheetApp.Spreadsheet} spreadsheet
-     * @param {Iteger} sheetId 
+     * @param {Integer} sheetId 
      * @return {SpreadsheetApp.Sheet}
      */
     const _getSheetById = (spreadsheet, sheetId) => {
@@ -605,36 +1026,6 @@ class Sheet {
 
       return null;
     };
-
-
-    /**
-     * @param {*} input 
-     * @return {boolean}
-     */
-    const _isValidSpreadsheetId = input => (
-      typeof input === 'string' &&
-      input.length > 10
-    );
-
-
-    /**
-     * @param {*} input 
-     * @return {boolean}
-     */
-    const _isValidSheetName = input => (
-      typeof input === 'string' &&
-      input.length
-    );
-
-
-    /**
-     * @param {*} input 
-     * @return {boolean}
-     */
-    const _isValidSheetId = input => (
-      Number.isInteger(input) &&
-      input >= 0
-    );
 
 
     /**
@@ -694,7 +1085,7 @@ class Sheet {
      * Case 5
      * @param {string} sheetName
      */
-    else if (args.length === 1 && _isValidSheetName(args[0])) {
+    else if (args.length === 1 && this.constructor.isValidSheetName(args[0])) {
       this._sheet = _getSheetByName(_getActiveSpreadsheet(), args[0]);
     }
 
@@ -704,7 +1095,7 @@ class Sheet {
      * @param {string} sheetName
      * @param {Array} fields
      */
-    else if (args.length === 2 && _isValidSheetName(args[0]) && _isFields(args[1])) {
+    else if (args.length === 2 && this.constructor.isValidSheetName(args[0]) && _isFields(args[1])) {
       this._sheet = _getSheetByName(_getActiveSpreadsheet(), args[0]);
       fields = args[1];
     }
@@ -714,7 +1105,7 @@ class Sheet {
      * Case 7
      * @param {Integer} sheetId
      */
-    else if (args.length === 1 && _isValidSheetId(args[0])) {
+    else if (args.length === 1 && this.constructor.isValidSheetId(args[0])) {
       this._sheet = _getSheetById(_getActiveSpreadsheet(), args[0]);
     }
 
@@ -724,7 +1115,7 @@ class Sheet {
      * @param {Integer} sheetId
      * @param {Array} fields
      */
-    else if (args.length === 2 && _isValidSheetId(args[0]) && _isFields(args[1])) {
+    else if (args.length === 2 && this.constructor.isValidSheetId(args[0]) && _isFields(args[1])) {
       this._sheet = _getSheetById(_getActiveSpreadsheet(), args[0]);
       fields = args[1];
     }
@@ -735,7 +1126,7 @@ class Sheet {
      * @param {SpreadsheetApp.Spreadsheet} spreadsheet
      * @param {string} sheetName
      */
-    else if (args.length === 2 && (this.constructor.isSpreadsheet(args[0]) && _isValidSheetName(args[1]))) {
+    else if (args.length === 2 && (this.constructor.isSpreadsheet(args[0]) && this.constructor.isValidSheetName(args[1]))) {
       this._sheet = _getSheetByName(args[0], args[1]);
     }
 
@@ -746,7 +1137,7 @@ class Sheet {
      * @param {string} sheetName
      * @param {Array} fields
      */
-    else if (args.length === 3 && this.constructor.isSpreadsheet(args[0]) && _isValidSheetName(args[1]) && _isFields(args[2])) {
+    else if (args.length === 3 && this.constructor.isSpreadsheet(args[0]) && this.constructor.isValidSheetName(args[1]) && _isFields(args[2])) {
       this._sheet = _getSheetByName(args[0], args[1]);
       fields = args[2];
     }
@@ -757,7 +1148,7 @@ class Sheet {
      * @param {SpreadsheetApp.Spreadsheet} spreadsheet
      * @param {Integer} sheetId
      */
-    else if (args.length === 2 && (this.constructor.isSpreadsheet(args[0]) && _isValidSheetId(args[1]))) {
+    else if (args.length === 2 && (this.constructor.isSpreadsheet(args[0]) && this.constructor.isValidSheetId(args[1]))) {
       this._sheet = _getSheetById(args[0], args[1]);
     }
 
@@ -768,7 +1159,7 @@ class Sheet {
      * @param {Integer} sheetId
      * @param {Array} fields
      */
-    else if (args.length === 3 && this.constructor.isSpreadsheet(args[0]) && _isValidSheetId(args[1]) && _isFields(args[2])) {
+    else if (args.length === 3 && this.constructor.isSpreadsheet(args[0]) && this.constructor.isValidSheetId(args[1]) && _isFields(args[2])) {
       this._sheet = _getSheetById(args[0], args[1]);
       fields = args[2];
     }
@@ -779,7 +1170,7 @@ class Sheet {
      * @param {string} spreadsheetId
      * @param {string} sheetName
      */
-    else if (args.length === 2 && (_isValidSpreadsheetId(args[0]) && _isValidSheetName(args[1]))) {
+    else if (args.length === 2 && (this.constructor.isValidSpreadsheetId(args[0]) && this.constructor.isValidSheetName(args[1]))) {
       this._sheet = _getSheetByName(SpreadsheetApp.openById(args[0]), args[1]);
     }
 
@@ -790,7 +1181,7 @@ class Sheet {
      * @param {string} sheetName
      * @param {Array} fields
      */
-    else if (args.length === 3 && _isValidSpreadsheetId(args[0]) && _isValidSheetName(args[1]) && _isFields(args[2])) {
+    else if (args.length === 3 && this.constructor.isValidSpreadsheetId(args[0]) && this.constructor.isValidSheetName(args[1]) && _isFields(args[2])) {
       this._sheet = _getSheetByName(SpreadsheetApp.openById(args[0]), args[1]);
       fields = args[2];
     }
@@ -801,7 +1192,7 @@ class Sheet {
      * @param {string} spreadsheetId
      * @param {Integer} sheetId
      */
-    else if (args.length === 2 && (_isValidSpreadsheetId(args[0]) && _isValidSheetId(args[1]))) {
+    else if (args.length === 2 && (this.constructor.isValidSpreadsheetId(args[0]) && this.constructor.isValidSheetId(args[1]))) {
       this._sheet = _getSheetById(SpreadsheetApp.openById(args[0]), args[1]);
     }
 
@@ -812,7 +1203,7 @@ class Sheet {
      * @param {Integer} sheetId
      * @param {Array} fields
      */
-    else if (args.length === 3 && _isValidSpreadsheetId(args[0]) && _isValidSheetId(args[1]) && _isFields(args[2])) {
+    else if (args.length === 3 && this.constructor.isValidSpreadsheetId(args[0]) && this.constructor.isValidSheetId(args[1]) && _isFields(args[2])) {
       this._sheet = _getSheetById(SpreadsheetApp.openById(args[0]), args[1]);
       fields = args[2];
     }
@@ -821,28 +1212,13 @@ class Sheet {
     else throw new Error('Invalid arguments: Unable to determine the correct overload.');
 
 
-    if (!this.constructor.isSheet(this._sheet))
-      throw new Error(`Invalid argument "sheet".`);
+    if (!this.constructor.isSheet(this._sheet)) {
+      throw new TypeError(`Invalid argument "sheet".`);
+    }
 
 
-    if (fields && !_isFields(fields))
-      throw new Error(`Invalid argument "fields".`);
-
-
-    try {
-      if (String(SheetSchema ?? '')) {
-        // Получить схему листа
-
-        /**
-         * @type {SheetSchema.Schema}
-         */
-        this._sheet.schema = (
-          (fields ? SheetSchema?.newSchema(fields) : SheetSchema?.getSchemaBySheet(this._sheet)) ??
-          null
-        );
-      }
-    } catch (error) {
-      console.warn(error.stack);
+    if (fields && !_isFields(fields)) {
+      throw new TypeError(`Invalid argument "fields".`);
     }
 
 
@@ -856,6 +1232,23 @@ class Sheet {
      * @type {string}
      */
     this._sheet.name = (this._sheet?.getName() ?? null);
+
+
+    try {
+      const schema = (fields ? SheetSchema?.newSchema(fields) : SheetSchema?.getSchemaBySheet(this._sheet));
+
+      /**
+       * @type {SheetSchema.Schema}
+       */
+      this._sheet.schema = schema;
+    } catch (error) {
+      console.warn(this._sheet.name, error.message);
+    }
+
+
+    if (!this._sheet.schema && fields) {
+      this._sheet.schema = { fields };
+    }
 
 
     /**
@@ -924,13 +1317,13 @@ class Sheet {
    */
   getSchema() {
     try {
-      if (SheetSchema && !this._sheet?.schema) {
+      if (!SheetSchema.isSchema(this._sheet?.schema)) {
         this._sheet.schema = (SheetSchema.getSchemaBySheet(this._sheet) ?? null);
-
-        return this._sheet.schema;
       }
+
+      return this._sheet.schema;
     } catch (error) {
-      throw error;
+      console.warn(this._sheet.name, error.message);
     } finally {
       return null;
     }
@@ -954,17 +1347,9 @@ class Sheet {
    * @return {SheetSchema.Schema}
    */
   insertSchema(schema) {
-    try {
-      if (SheetSchema) {
-        this._sheet.schema = SheetSchema.insertSchema(this._sheet, schema);
+    this._sheet.schema = SheetSchema.insertSchema(this._sheet, schema);
 
-        return this._sheet.schema;
-      }
-    } catch (error) {
-      throw error;
-    } finally {
-      return false;
-    }
+    return this._sheet.schema;
   }
 
 
@@ -974,17 +1359,10 @@ class Sheet {
    * @return {boolean}
    */
   removeSchema() {
-    try {
-      if (SheetSchema) {
-        SheetSchema.removeSchema(this._sheet);
-        this._sheet.schema = null;
-        return true;
-      }
-    } catch (error) {
-      throw error;
-    } finally {
-      return false;
-    }
+    SheetSchema.removeSchema(this._sheet);
+    this._sheet.schema = null;
+
+    return true;
   }
 
 
@@ -1015,6 +1393,7 @@ class Sheet {
    * @param {boolean} [options.includeRowsHiddenByFilterView = false] 
    * @param {boolean} [options.includeRowsHiddenByUser = false] 
    * @param {boolean} [options.includeColumnsHiddenByUser = false] 
+   * @param {boolean} [options.updateFormulas = false] Обновляет формулы перед получением данных.
    * @param {string} [options.output = 'ARRAY'] Формат вывода.
    * Возможные значения:
    * - `ARRAY`: данные будут представлены в виде двумерного массива.
@@ -1042,13 +1421,15 @@ class Sheet {
 
     const frozenRows = sheet?.getFrozenRows();
 
-    if (!Number.isInteger(frozenRows))
+    if (!Number.isInteger(frozenRows)) {
       throw new TypeError(`Frozen rows is not an integer.`);
+    }
 
     const lastRow = sheet?.getLastRow();
 
-    if (!Number.isInteger(lastRow))
+    if (!Number.isInteger(lastRow)) {
       throw new TypeError(`Last row is not an integer.`);
+    }
 
     let rowPosition = 1;
     let numRows = lastRow;
@@ -1057,20 +1438,23 @@ class Sheet {
       rowPosition = frozenRows + 1;
       numRows = lastRow - frozenRows;
 
-      if (numRows <= 0)
+      if (numRows <= 0) {
         throw new Error(`После замороженных строк нет данных.`);
+      }
     }
 
 
     const frozenCols = sheet?.getFrozenColumns();
 
-    if (!Number.isInteger(frozenCols))
+    if (!Number.isInteger(frozenCols)) {
       throw new TypeError(`Frozen columns is not an integer.`);
+    }
 
     const lastCol = sheet?.getLastColumn();
 
-    if (!Number.isInteger(lastCol))
+    if (!Number.isInteger(lastCol)) {
       throw new TypeError(`Last column is not an integer.`);
+    }
 
     let colPosition = 1;
     let numCols = lastCol;
@@ -1079,13 +1463,16 @@ class Sheet {
       colPosition = frozenCols + 1;
       numCols = lastCol - frozenCols;
 
-      if (numCols <= 0)
+      if (numCols <= 0) {
         throw new Error(`После замороженных столбцов нет данных.`);
+      }
     }
 
     let values = [];
 
     if (numRows > 0 && numCols > 0) {
+      // TODO `options.updateFormulas = true`
+
       const range = sheet?.getRange(rowPosition, colPosition, numRows, numCols);
 
       if (options.displayValues === true) {
@@ -1095,8 +1482,9 @@ class Sheet {
       }
     }
 
-    if (!(Array.isArray(values) && (!values.length || values.every(Array.isArray))))
+    if (!(Array.isArray(values) && (!values.length || values.every(Array.isArray)))) {
       throw new TypeError(`Values are invalid or improperly formatted.`);
+    }
 
     if (!['OBJECT', 'OBJECT_VALUES'].includes(options.output)) {
       return values;
@@ -1107,8 +1495,6 @@ class Sheet {
     const rowsHidden = {};
     const colsHidden = {};
     const rows = {};
-
-    console.log('filter:', filter);
 
     for (const [i, rowValues] of values.entries()) {
       const rowIndex = i + (options.includeFrozenRows !== true ? frozenRows : 0);
@@ -1146,7 +1532,7 @@ class Sheet {
 
         // Найти скрытые пользователем столбцы?
         if (options.includeColumnsHiddenByUser !== true) {
-          if (!colsHidden[colPosition]) {
+          if (typeof colsHidden[colPosition] !== 'boolean') {
             colsHidden[colPosition] = sheet.isColumnHiddenByUser(colPosition);
           }
         }
@@ -1157,7 +1543,17 @@ class Sheet {
         }
 
         if (options.colNaming === 'FIELD_NAME') {
-          colName = (sheet?.schema?.getFieldByIndex(colIndex)?._values?.name ?? null);
+          if (sheet?.schema?.getFieldByIndex) {
+            colName = (sheet?.schema?.getFieldByIndex(colIndex)?._values?.name ?? null);
+          }
+
+          if (!colName && sheet?.schema?.fields) {
+            colName = (sheet?.schema?.fields[colIndex] ?? null);
+          }
+
+          if (!colName) {
+            colName = `Col${colPosition}`;
+          }
         }
 
         else if (options.colNaming === 'INDEX') {
@@ -1215,299 +1611,111 @@ class Sheet {
 
 
   /**
-   * Удаляет строки по условию.
-   * 
-   * #### Example 1
-   * ```javascript
-   * const sheet = new Sheet('Sheet Name');
-   * 
-   * // Чётные строки
-   * sheet.deleteRows((values, rowIndex) => rowIndex % 2 === 0);
-   * ```
-   * 
-   * #### Example 2
-   * ```javascript
-   * const sheet = new Sheet('Sheet Name');
-   * 
-   * // Нечётные строки и столбец 3 равен true
-   * sheet.deleteRows((values, rowIndex) => rowIndex % 2 === 1 && values.Col3 === true, {
-   *   displayValues: false,
-   *   includeFrozenRows: true,
-   *   includeFrozenCols: true,
-   *   output: 'OBJECT_VALUES',
-   *   colNaming: 'COLUMN_POSITION',
-   * });
-   * ```
-   * @param {function} callback Функция, которая будет вызвана для каждой строки.
-   * Если функция возвращает `true`, то строка остаётся, если `false`, то удаляется.
-   * @param {Object} [options = {}] Опции получения данных. Наследуется от `getValues()`.
-   */
-  /**
-   * Удаляет несколько строк, начиная с заданной позиции строки.
-   * @overload
-   * @param {Integer} rowPosition	Позиция первой удаляемой строки.
-   * @param {Integer} howMany Количество строк, которые необходимо удалить.
-   */
-  deleteRows(...args) {
-    const sheet = this._sheet;
-    const frozenRows = sheet?.getFrozenRows();
-
-    if (!Number.isInteger(frozenRows))
-      throw new TypeError(`Frozen rows is not an integer.`);
-
-
-    /**
-     * @param {function} callback 
-     * @param {Object} options 
-     * @return {void}
-     */
-    const _deleteRowsByConditional = (callback, options = {}) => {
-      options.rowNaming = 'INDEX';
-      let values = this.getValues(options);
-
-      // Преобразование: Объекта в Массив объектов.
-      if (['OBJECT', 'OBJECT_VALUES'].includes(options.output)) {
-        const result = [];
-
-        for (const rowIndex in values) {
-          const i = rowIndex - (options.includeFrozenRows !== true ? frozenRows : 0);
-          result[i] = values[rowIndex];
-        }
-
-        values = result;
-      }
-
-
-      // Поиск строк для удаления
-
-      const length = values.length - 1;
-      let rowsToDelete = new Map();
-      let startRowPosition = null;
-      let numRows = 0;
-
-      for (const [i, rowValues] of values.entries()) {
-        const rowIndex = i + (options.includeFrozenRows !== true ? frozenRows : 0);
-        const rowPosition = rowIndex + 1;
-
-        const isTrue = callback.apply(null, [rowValues, rowPosition]);
-
-        if (isTrue) {
-          if (startRowPosition === null) {
-            startRowPosition = rowPosition;
-          }
-
-          numRows += 1;
-        }
-
-        if ((!isTrue && numRows > 0) || i === length) {
-          // Если последовательность строк для удаления закончилась, сохраняем ее
-          rowsToDelete.set(startRowPosition, numRows);
-          startRowPosition = null;
-          numRows = 0;
-        }
-      }
-
-      // Удаление строк в обратном порядке, чтобы избежать смещения
-      if (rowsToDelete.size > 0) {
-        // Преобразуем Map в массив и сортируем его в обратном порядке
-        rowsToDelete = [...rowsToDelete].reverse();
-        const length = rowsToDelete.length - 1;
-
-        for (let i = 0; i <= length; i++) {
-          const [startRow, numRows] = rowsToDelete[i];
-
-          // Если это последняя группа строк для удаления
-          if (i === length) {
-            const lastRowToDelete = startRow + numRows - 1;
-            const maxRows = sheet.getMaxRows();
-
-            // Проверка: убедиться, что останется хотя бы одна строка после закрепленных строк
-            if (maxRows - lastRowToDelete < 1) {
-              // Добавление новой строки, если удаление последней оставит таблицу пустой
-              sheet.insertRowAfter(maxRows);
-
-              console.info('Inserted one row to ensure at least one row remains after the frozen rows.');
-            }
-          }
-
-          sheet.deleteRows(startRow, numRows);
-
-          console.info(`Deleted ${numRows} row(s) starting from row: ${startRow}`);
-        }
-      }
-
-      return void 0;
-    };
-
-
-    /**
-     * Case 1
-     * @param {Integer} rowPosition
-     * @param {Integer} howMany
-     */
-    if (args.length === 2 && (Number.isInteger(args[0]) && Number.isInteger(args[1]))) {
-      return sheet.deleteRows(...args);
-    }
-
-
-    /**
-     * Case 2
-     * @param {function} callback
-     */
-    else if (args.length === 1 && (typeof args[0] === 'function')) {
-      return _deleteRowsByConditional(...args);
-    }
-
-
-    /**
-     * Case 3
-     * @param {function} callback
-     * @param {Object} options
-     */
-    else if (args.length === 2 && (typeof args[0] === 'function' && typeof args[1] === 'object' || (args[1] == null || args[1] == undefined))) {
-      return _deleteRowsByConditional(...args);
-    }
-
-
-    else throw new Error('Invalid arguments: Unable to determine the correct overload.');
-  }
-
-
-
-  /**
-   * @todo
-   * Удаляет столбцы по условию.
-   * 
-   * #### Example 1
-   * ```javascript
-   * const sheet = new Sheet('Sheet Name');
-   * 
-   * // Чётные столбцы
-   * sheet.deleteColumns((values, colIndex) => colIndex % 2 === 0);
-   * ```
-   * 
-   * #### Example 2
-   * ```javascript
-   * const sheet = new Sheet('Sheet Name');
-   * 
-   * // Нечётные столбцы и ячейка в строке 3 равна true
-   * sheet.deleteColumns((values, colIndex) => colIndex % 2 === 1 && values.Row3 === true, {
-   *   displayValues: false,
-   *   includeFrozenRows: true,
-   *   includeFrozenCols: true,
-   *   output: 'OBJECT_VALUES',
-   *   colNaming: 'COLUMN_POSITION',
-   * });
-   * ```
-   * @param {function} callback Функция, которая будет вызвана для каждого столбца.
-   * Если функция возвращает `true`, то столбец остаётся, если `false`, то удаляется.
-   * @param {Object} [options = {}] Опции получения данных. Наследуется от `getValues()`.
-   */
-  /**
-   * Удаляет несколько столбцов, начиная с заданной позиции столбца.
-   * @overload
-   * @param {Integer} colPosition	Позиция первого удаляемого столбца.
-   * @param {Integer} howMany Количество столбцов, которые необходимо удалить.
-   */
-  deleteColumns(...args) {
-    const sheet = this._sheet;
-    const frozenCols = sheet?.getFrozenColumns();
-
-    if (!Number.isInteger(frozenCols))
-      throw new TypeError(`Frozen columns is not an integer.`);
-
-
-    /**
-     * @param {function} callback 
-     * @param {Object} options 
-     * @return {void}
-     */
-    const _deleteColumnsByConditional = (callback, options = {}) => {
-      // options.colNaming = 'INDEX';
-      // let values = this.getValues(options);
-
-      // TODO
-      throw new Error(`Метод ${this.constructor.name}.deleteColumns еще в разработке!`);
-
-      return void 0;
-    };
-
-
-    /**
-     * Case 1
-     * @param {Integer} colPosition
-     * @param {Integer} howMany
-     */
-    if (args.length === 2 && (Number.isInteger(args[0]) && Number.isInteger(args[1]))) {
-      return sheet.deleteColumns(...args);
-    }
-
-
-    /**
-     * Case 2
-     * @param {function} callback
-     */
-    else if (args.length === 1 && (typeof args[0] === 'function')) {
-      return _deleteColumnsByConditional(...args);
-    }
-
-
-    /**
-     * Case 3
-     * @param {function} callback
-     * @param {Object} options
-     */
-    else if (args.length === 2 && (typeof args[0] === 'function' && typeof args[1] === 'object' || (args[1] == null || args[1] == undefined))) {
-      return _deleteColumnsByConditional(...args);
-    }
-
-
-    else throw new Error('Invalid arguments: Unable to determine the correct overload.');
-  }
-
-
-
-  /**
-   * Добавляет столбцы справа текущей области данных на листе.
+   * Добавляет строку вверху текущей области данных на листе.
    * Если содержимое ячейки начинается с `=`, оно интерпретируется как формула.
-   * 
-   * #### Example
-   * ```javascript
-   * const sheet = new Sheet('Sheet Name');
-   * 
-   * sheet.appendColumns([
-   *   ["1-1", "1-2", "1-3"],
-   *   ["2-1", "2-2", "2-3"],
-   *   ["3-1", "3-2", "3-3"]
-   * ]);
-   * ```
-   * @param {Array} colsContents
+   * @since 1.4.0
+   * @param {Array} rowContents Одномерный массив, содержащий данные для добавления.
+   * @param {Object} [options = {}] Дополнительные параметры для настройки поведения метода.
+   * @param {boolean} [options.afterFrozenRows = true] Определяет, вставлять ли строки после замороженных строк.
+   * Если `true`, строки будут добавлены сразу после замороженных строк, если они существуют.
    */
-  appendColumns(colsContents) {
-    if (!Array.isArray(colsContents))
-      throw new Error();
+  prependRow(rowContents, options = {}) {
+    if (!arguments.length) {
+      throw new Error(`The parameters () do not match the signature for ${this.constructor.name}.prependRow.`);
+    }
 
-    if (!colsContents.every(item => Array.isArray(item)))
-      throw new Error();
+    return this.prependRows([rowContents], options);
+  }
 
-    const numRows = colsContents.length;
 
-    if (!(colsContents.length > 0))
-      throw new Error();
 
-    const numColumns = colsContents[0].length;
+  /**
+   * Добавляет строки вверху текущей области данных на листе.
+   * Если содержимое ячейки начинается с `=`, оно интерпретируется как формула.
+   * @since 1.4.0
+   * @param {Array<Array>} rowsContents Двумерный массив, содержащий данные для добавления.
+   * @param {Object} [options = {}] Дополнительные параметры для настройки поведения метода.
+   * @param {boolean} [options.afterFrozenRows = true] Определяет, вставлять ли строки после замороженных строк.
+   * Если `true`, строки будут добавлены сразу после замороженных строк, если они существуют.
+   */
+  prependRows(rowsContents, options = {}) {
+    if (!arguments.length) {
+      throw new Error(`The parameters () do not match the signature for ${this.constructor.name}.prependRows.`);
+    }
 
-    if (!(numColumns > 0))
-      throw new Error();
+    if (!Array.isArray(rowsContents)) {
+      throw new TypeError('Аргумент должен быть массивом.');
+    }
 
-    const lastCol = this._sheet?.getLastColumn();
-    const columnPosition = lastCol + 1;
+    if (!rowsContents.every(Array.isArray)) {
+      throw new TypeError('Каждый элемент массива должен быть массивом.');
+    }
 
-    const range = this.getRange(1, columnPosition, numRows, numColumns);
+    const numRows = rowsContents.length;
 
-    range.setValues(values);
+    if (!(rowsContents.length > 0)) {
+      throw new TypeError('Аргумент должен содержать хотя бы одну строку.');
+    }
+
+    const numColumns = rowsContents[0].length;
+
+    if (!(numColumns > 0)) {
+      throw new TypeError('Каждая строка должна содержать хотя бы один столбец.');
+    }
+
+    const sheet = this._sheet;
+    const lock = LockService.getDocumentLock();
+
+    try {
+      // Ждем, пока не освободится блокировка, но не дольше 30 секунд.
+      lock?.waitLock(30000);
+
+      const lastRow = sheet.getLastRow();
+      let rowPosition = 1;
+      let frozenRows = sheet.getFrozenRows();
+
+      if (options.afterFrozenRows !== false) {
+        rowPosition = frozenRows + 1;
+      }
+
+      if (rowPosition <= lastRow) {
+        sheet.insertRowsBefore(rowPosition, numRows);
+
+        // Сместить закрепленные строки
+        if (options.afterFrozenRows === false && frozenRows > 0) {
+          sheet.setFrozenRows(frozenRows);
+        }
+      }
+
+      const range = sheet.getRange(rowPosition, 1, numRows, numColumns);
+
+      range.setValues(rowsContents);
+    } catch (error) {
+      console.warn(error.message);
+    } finally {
+      lock?.releaseLock();
+    }
 
     return this;
+  }
+
+
+
+  /**
+   * Добавляет строку внизу текущей области данных на листе.
+   * Если содержимое ячейки начинается с `=`, оно интерпретируется как формула.
+   * @since 1.4.0
+   * @param {Array} rowContents Одномерный массив, содержащий данные для добавления.
+   * @param {Object} [options = {}] Дополнительные параметры для настройки поведения метода.
+   * @param {boolean} [options.afterFrozenRows = true] Определяет, вставлять ли строки после замороженных строк.
+   * Если `true`, строки будут добавлены сразу после замороженных строк, если они существуют.
+   */
+  appendRow(rowContents, options = {}) {
+    if (!arguments.length) {
+      throw new Error(`The parameters () do not match the signature for ${this.constructor.name}.appendRow.`);
+    }
+
+    return this.appendRows([rowContents], options);
   }
 
 
@@ -1526,33 +1734,634 @@ class Sheet {
    *   ["3-1", "3-2", "3-3"]
    * ]);
    * ```
-   * @param {Array} rowsContents 
+   * @since 1.4.0
+   * @param {Array<Array>} rowsContents Двумерный массив, содержащий данные для добавления.
+   * @param {Object} [options = {}] Дополнительные параметры для настройки поведения метода.
+   * @param {boolean} [options.afterFrozenRows = true] Определяет, вставлять ли строки после замороженных строк.
+   * Если `true`, строки будут добавлены сразу после замороженных строк, если они существуют.
    */
-  appendRows(rowsContents) {
-    if (!Array.isArray(rowsContents))
-      throw new Error();
+  appendRows(rowsContents, options = {}) {
+    if (!arguments.length) {
+      throw new Error(`The parameters () do not match the signature for ${this.constructor.name}.appendRows.`);
+    }
 
-    if (!rowsContents.every(item => Array.isArray(item)))
-      throw new Error();
+    if (!Array.isArray(rowsContents)) {
+      throw new TypeError('Аргумент должен быть массивом.');
+    }
+
+    if (!rowsContents.every(Array.isArray)) {
+      throw new TypeError('Каждый элемент массива должен быть массивом.');
+    }
 
     const numRows = rowsContents.length;
 
-    if (!(rowsContents.length > 0))
-      throw new Error();
+    if (!(rowsContents.length > 0)) {
+      throw new TypeError('Аргумент должен содержать хотя бы одну строку.');
+    }
 
     const numColumns = rowsContents[0].length;
 
-    if (!(numColumns > 0))
-      throw new Error();
+    if (!(numColumns > 0)) {
+      throw new TypeError('Каждая строка должна содержать хотя бы один столбец.');
+    }
 
-    const lastRow = this._sheet?.getLastRow();
-    const rowPosition = lastRow + 1;
+    const sheet = this._sheet;
+    const lock = LockService.getDocumentLock();
 
-    const range = this.getRange(rowPosition, 1, numRows, numColumns);
+    try {
+      // Ждем, пока не освободится блокировка, но не дольше 30 секунд.
+      lock?.waitLock(30000);
 
-    range.setValues(values);
+      const lastRow = sheet.getLastRow();
+      let rowPosition = lastRow;
+
+      if (options.afterFrozenRows !== false) {
+        const frozenRows = sheet.getFrozenRows();
+
+        if (rowPosition < frozenRows) {
+          rowPosition = frozenRows;
+        }
+      }
+
+      const range = sheet.getRange(rowPosition + 1, 1, numRows, numColumns);
+
+      range.setValues(rowsContents);
+    } catch (error) {
+      console.warn(error.message);
+    } finally {
+      lock?.releaseLock();
+    }
 
     return this;
+  }
+
+
+
+  /**
+   * Удаляет несколько строк, начиная с заданной позиции строки.
+   * @overload
+   * @param {Integer} rowPosition	Позиция первой удаляемой строки.
+   * @param {Integer} howMany Количество строк, которые необходимо удалить.
+   */
+  /**
+   * Удаляет столбцы по условию.
+   * @note Для обеспечения совместимости с предыдущими версиями.
+   * @param {function} callback Функция, которая будет вызвана для каждой ячейки.
+   * Если функция возвращает `true`, то строка остаётся, если `false`, то удаляется.
+   * @param {Object} [options = {}] Опции получения данных. Наследуется от `Sheet.getValues()`.
+   */
+  deleteRows(...args) {
+    const sheet = this._sheet;
+
+
+    /**
+     * Case 1
+     * @param {Integer} rowPosition
+     * @param {Integer} howMany
+     */
+    if (args.length === 2 && (Number.isInteger(args[0]) && Number.isInteger(args[1]))) {
+      return sheet.deleteRows(...args);
+    }
+
+
+    /**
+     * Case 2
+     * @param {function} callback
+     */
+    else if (args.length === 1 && (typeof args[0] === 'function')) {
+      return this.deleteRowsByConditional(...args);
+    }
+
+
+    /**
+     * Case 3
+     * @param {function} callback
+     * @param {Object} options
+     */
+    else if (args.length === 2 && (typeof args[0] === 'function' && typeof args[1] === 'object' || (args[1] == null || args[1] == undefined))) {
+      return this.deleteRowsByConditional(...args);
+    }
+
+
+    else throw new Error('Invalid arguments: Unable to determine the correct overload.');
+  }
+
+
+
+  /**
+   * Удаляет строки по условию.
+   * 
+   * #### Example 1
+   * ```javascript
+   * const sheet = new Sheet('Sheet Name');
+   * 
+   * // Чётные строки
+   * sheet.deleteRowsByConditional((values, rowIndex) => rowIndex % 2 === 0);
+   * ```
+   * 
+   * #### Example 2
+   * ```javascript
+   * const sheet = new Sheet('Sheet Name');
+   * 
+   * // Нечётные строки и столбец 3 равен true
+   * sheet.deleteRowsByConditional((values, rowIndex) => rowIndex % 2 === 1 && values.Col3 === true, {
+   *   displayValues: false,
+   *   includeFrozenRows: true,
+   *   includeFrozenCols: true,
+   *   output: 'OBJECT_VALUES',
+   *   colNaming: 'COLUMN_POSITION',
+   * });
+   * ```
+   * @since 1.4.0
+   * @param {function} callback Функция, которая будет вызвана для каждой ячейки.
+   * Если функция возвращает `true`, то строка остаётся, если `false`, то удаляется.
+   * @param {Object} [options = {}] Опции получения данных. Наследуется от `Sheet.getValues()`.
+   */
+  deleteRowsByConditional(callback, options = {}) {
+    if (!arguments.length) {
+      throw new Error(`The parameters () do not match the signature for ${this.constructor.name}.deleteRowsByConditional.`);
+    }
+
+    if (typeof callback !== 'function') {
+      throw new TypeError('Invalid argument "callback".');
+    }
+
+    if (typeof options !== 'object') {
+      throw new TypeError('Invalid argument "options".');
+    }
+
+    const sheet = this._sheet;
+    const frozenRows = sheet?.getFrozenRows();
+
+    if (!Number.isInteger(frozenRows)) {
+      throw new TypeError(`Frozen rows is not an integer.`);
+    }
+
+
+    options.rowNaming = 'INDEX';
+    let values = this.getValues(options);
+
+    // Преобразование: Объекта в Массив объектов.
+    if (['OBJECT', 'OBJECT_VALUES'].includes(options.output)) {
+      const result = [];
+
+      for (const rowIndex in values) {
+        const i = rowIndex - (options.includeFrozenRows !== true ? frozenRows : 0);
+        result[i] = values[rowIndex];
+      }
+
+      values = result;
+    }
+
+
+    // Поиск строк для удаления
+
+    const length = values.length - 1;
+    let rowsToDelete = new Map();
+    let startRowPosition = null;
+    let numRows = 0;
+
+    for (const [i, rowValues] of values.entries()) {
+      const rowIndex = i + (options.includeFrozenRows !== true ? frozenRows : 0);
+      const rowPosition = rowIndex + 1;
+
+      const isTrue = callback.apply(null, [rowValues, rowPosition]);
+
+      if (isTrue) {
+        if (startRowPosition === null) {
+          startRowPosition = rowPosition;
+        }
+
+        numRows += 1;
+      }
+
+      if ((!isTrue && numRows > 0) || i === length) {
+        // Если последовательность строк для удаления закончилась, сохраняем ее
+        rowsToDelete.set(startRowPosition, numRows);
+        startRowPosition = null;
+        numRows = 0;
+      }
+    }
+
+    // Удаление строк в обратном порядке, чтобы избежать смещения
+    if (rowsToDelete.size > 0) {
+      // Преобразуем Map в массив и сортируем его в обратном порядке
+      rowsToDelete = [...rowsToDelete].reverse();
+      const length = rowsToDelete.length - 1;
+
+      for (let i = 0; i <= length; i++) {
+        const [startRow, numRows] = rowsToDelete[i];
+
+        // Если это последняя группа строк для удаления
+        if (i === length) {
+          const lastRowToDelete = startRow + numRows - 1;
+          const maxRows = sheet.getMaxRows();
+
+          // Проверка: убедиться, что останется хотя бы одна строка после закрепленных строк
+          if (maxRows - lastRowToDelete < 1) {
+            // Добавление новой строки, если удаление последней оставит таблицу пустой
+            sheet.insertRowAfter(maxRows);
+          }
+        }
+
+        sheet.deleteRows(startRow, numRows);
+
+        // console.info(`Deleted ${numRows} row(s) starting from row: ${startRow}`);
+      }
+    }
+
+    return void 0;
+  }
+
+
+
+  /**
+   * Очищает строки по условию.
+   * @param {function} callback Функция, которая будет вызвана для каждой ячейки.
+   * Если функция возвращает `true`, то строка не очищается, если `false`, то очищается.
+   * @param {Object} [options = {}] Параметры для получения данных. Включает в себя опции, унаследованные от `Sheet.getValues()`, а также дополнительные параметры.
+   * @param {boolean} [options.contentsOnly = true] Следует ли очистить содержимое.
+   * @param {boolean} [options.formatOnly = true] Следует ли очистить формат.
+   * @param {boolean} [options.conditionalFormatRulesOnly = false] Следует ли очистить правила условного форматирования.
+   * @param {boolean} [options.notesOnly = false] Следует ли очистить заметки.
+   */
+  clearRowsByConditional(callback, options = {}) {
+    // TODO `clearRowsByConditional()`
+    throw new Error(`The method is under development!`);
+
+    if (!arguments.length) {
+      throw new Error(`The parameters () do not match the signature for ${this.constructor.name}.clearRowsByConditional.`);
+    }
+
+    if (typeof callback !== 'function') {
+      throw new TypeError('Invalid argument "callback".');
+    }
+
+    if (typeof options !== 'object') {
+      throw new TypeError('Invalid argument "options".');
+    }
+
+    const sheet = this._sheet;
+    const frozenRows = sheet?.getFrozenRows();
+
+    if (!Number.isInteger(frozenRows)) {
+      throw new TypeError(`Frozen rows is not an integer.`);
+    }
+
+
+    options.rowNaming = 'INDEX';
+    let values = this.getValues(options);
+
+    // Преобразование: Объекта в Массив объектов.
+    if (['OBJECT', 'OBJECT_VALUES'].includes(options.output)) {
+      const result = [];
+
+      for (const rowIndex in values) {
+        const i = rowIndex - (options.includeFrozenRows !== true ? frozenRows : 0);
+        result[i] = values[rowIndex];
+      }
+
+      values = result;
+    }
+
+
+    // Поиск строк для удаления
+
+    const length = values.length - 1;
+    let rowsToDelete = new Map();
+    let startRowPosition = null;
+    let numRows = 0;
+
+    for (const [i, rowValues] of values.entries()) {
+      const rowIndex = i + (options.includeFrozenRows !== true ? frozenRows : 0);
+      const rowPosition = rowIndex + 1;
+
+      const isTrue = callback.apply(null, [rowValues, rowPosition]);
+
+      if (isTrue) {
+        if (startRowPosition === null) {
+          startRowPosition = rowPosition;
+        }
+
+        numRows += 1;
+      }
+
+      if ((!isTrue && numRows > 0) || i === length) {
+        // Если последовательность строк для удаления закончилась, сохраняем ее
+        rowsToDelete.set(startRowPosition, numRows);
+        startRowPosition = null;
+        numRows = 0;
+      }
+    }
+
+    // Удаление строк в обратном порядке, чтобы избежать смещения
+    if (rowsToDelete.size > 0) {
+      // Преобразуем Map в массив и сортируем его в обратном порядке
+      rowsToDelete = [...rowsToDelete].reverse();
+      const length = rowsToDelete.length - 1;
+
+      for (let i = 0; i <= length; i++) {
+        const [startRow, numRows] = rowsToDelete[i];
+
+        // Если это последняя группа строк для удаления
+        if (i === length) {
+          const lastRowToDelete = startRow + numRows - 1;
+          const maxRows = sheet.getMaxRows();
+
+          // Проверка: убедиться, что останется хотя бы одна строка после закрепленных строк
+          if (maxRows - lastRowToDelete < 1) {
+            // Добавление новой строки, если удаление последней оставит таблицу пустой
+            sheet.insertRowAfter(maxRows);
+          }
+        }
+
+        sheet.deleteRows(startRow, numRows);
+
+        // console.info(`Deleted ${numRows} row(s) starting from row: ${startRow}`);
+      }
+    }
+
+    return void 0;
+  }
+
+
+
+  /**
+   * Добавляет столбец слева текущей области данных на листе.
+   * Если содержимое ячейки начинается с `=`, оно интерпретируется как формула.
+   * @since 1.4.0
+   * @param {Array} colContents Одномерный массив, содержащий данные для добавления.
+   * @param {Object} [options = {}] Дополнительные параметры для настройки поведения метода.
+   * @param {boolean} [options.afterFrozenColumns = true] Определяет, вставлять ли столбцы после замороженных столбов.
+   * Если `true`, столбцы будут добавлены сразу после замороженных столбов, если они существуют.
+   */
+  prependColumn(colContents, options = {}) {
+    if (!arguments.length) {
+      throw new Error(`The parameters () do not match the signature for ${this.constructor.name}.prependColumn.`);
+    }
+
+    return this.prependColumns([colContents], options);
+  }
+
+
+
+  /**
+   * Добавляет столбцы слева текущей области данных на листе.
+   * Если содержимое ячейки начинается с `=`, оно интерпретируется как формула.
+   * @param {Array} colsContents Двумерный массив, содержащий данные для добавления.
+   * @param {Object} [options = {}] Дополнительные параметры для настройки поведения метода.
+   * @param {boolean} [options.afterFrozenColumns = true] Определяет, вставлять ли столбцы после замороженных столбов.
+   * Если `true`, столбцы будут добавлены сразу после замороженных столбов, если они существуют.
+   */
+  prependColumns(colsContents) {
+    // TODO `prependColumns()`
+    throw new Error(`The method is under development!`);
+
+    if (!arguments.length) {
+      throw new Error(`The parameters () do not match the signature for ${this.constructor.name}.prependColumns.`);
+    }
+  }
+
+
+
+  /**
+   * Добавляет столбец справа текущей области данных на листе.
+   * Если содержимое ячейки начинается с `=`, оно интерпретируется как формула.
+   * @since 1.4.0
+   * @param {Array} colContents Одномерный массив, содержащий данные для добавления.
+   * @param {Object} [options = {}] Дополнительные параметры для настройки поведения метода.
+   * @param {boolean} [options.afterFrozenColumns = true] Определяет, вставлять ли столбцы после замороженных столбов.
+   * Если `true`, столбцы будут добавлены сразу после замороженных столбов, если они существуют.
+   */
+  appendColumn(colContents, options = {}) {
+    if (!arguments.length) {
+      throw new Error(`The parameters () do not match the signature for ${this.constructor.name}.appendColumn.`);
+    }
+
+    return this.appendColumns([colContents], options);
+  }
+
+
+
+  /**
+   * Добавляет столбцы справа текущей области данных на листе.
+   * Если содержимое ячейки начинается с `=`, оно интерпретируется как формула.
+   * 
+   * #### Example
+   * ```javascript
+   * const sheet = new Sheet('Sheet Name');
+   * 
+   * sheet.appendColumns([
+   *   ["1-1", "1-2", "1-3"],
+   *   ["2-1", "2-2", "2-3"],
+   *   ["3-1", "3-2", "3-3"]
+   * ]);
+   * ```
+   * @param {Array} colsContents Двумерный массив, содержащий данные для добавления.
+   * @param {Object} [options = {}] Дополнительные параметры для настройки поведения метода.
+   * @param {boolean} [options.afterFrozenColumns = true] Определяет, вставлять ли строки после замороженных строк.
+   * Если `true`, строки будут добавлены сразу после замороженных строк, если они существуют.
+   */
+  appendColumns(colsContents, options = {}) {
+    if (!arguments.length) {
+      throw new Error(`The parameters () do not match the signature for ${this.constructor.name}.appendColumns.`);
+    }
+
+    if (!Array.isArray(colsContents)) {
+      throw new TypeError('Аргумент должен быть массивом.');
+    }
+
+    if (!colsContents.every(item => Array.isArray(item))) {
+      throw new TypeError('Каждый элемент массива должен быть массивом.');
+    }
+
+    const numRows = colsContents.length;
+
+    if (!(colsContents.length > 0)) {
+      throw new TypeError('Аргумент должен содержать хотя бы одну строку.');
+    }
+
+    const numColumns = colsContents[0].length;
+
+    if (!(numColumns > 0)) {
+      throw new TypeError('Каждая строка должна содержать хотя бы один столбец.');
+    }
+
+    const sheet = this._sheet;
+    const lock = LockService.getDocumentLock();
+
+    try {
+      // Ждем, пока не освободится блокировка, но не дольше 30 секунд.
+      lock?.waitLock(30000);
+
+      const lastCol = sheet.getLastColumn();
+      const columnPosition = lastCol;
+
+      if (options.afterFrozenColumns !== false) {
+        const frozenColumns = sheet.getFrozenColumns();
+
+        if (columnPosition < frozenColumns) {
+          columnPosition = frozenColumns;
+        }
+      }
+
+      const range = sheet.getRange(1, columnPosition, numRows, numColumns);
+
+      range.setValues(rowsContents);
+    } catch (error) {
+      console.warn(error.message);
+    } finally {
+      lock?.releaseLock();
+    }
+
+    return this;
+  }
+
+
+
+  /**
+   * Удаляет несколько столбцов, начиная с заданной позиции столбца.
+   * @overload
+   * @param {Integer} colPosition	Позиция первого удаляемого столбца.
+   * @param {Integer} howMany Количество столбцов, которые необходимо удалить.
+   */
+  /**
+   * Удаляет столбцы по условию.
+   * @note Для обеспечения совместимости с предыдущими версиями.
+   * @param {function} callback Функция, которая будет вызвана для для каждой ячейки.
+   * Если функция возвращает `true`, то столбец остаётся, если `false`, то удаляется.
+   * @param {Object} [options = {}] Опции получения данных. Наследуется от `Sheet.getValues()`.
+   */
+  deleteColumns(...args) {
+    const sheet = this._sheet;
+
+
+    /**
+     * Case 1
+     * @param {Integer} colPosition
+     * @param {Integer} howMany
+     */
+    if (args.length === 2 && (Number.isInteger(args[0]) && Number.isInteger(args[1]))) {
+      return sheet.deleteColumns(...args);
+    }
+
+
+    /**
+     * Case 2
+     * @param {function} callback
+     */
+    else if (args.length === 1 && (typeof args[0] === 'function')) {
+      return this.deleteColumnsByConditional(...args);
+    }
+
+
+    /**
+     * Case 3
+     * @param {function} callback
+     * @param {Object} options
+     */
+    else if (args.length === 2 && (typeof args[0] === 'function' && typeof args[1] === 'object' || (args[1] == null || args[1] == undefined))) {
+      return this.deleteColumnsByConditional(...args);
+    }
+
+
+    else throw new Error('Invalid arguments: Unable to determine the correct overload.');
+  }
+
+
+
+  /**
+   * Удаляет столбцы по условию.
+   * 
+   * #### Example 1
+   * ```javascript
+   * const sheet = new Sheet('Sheet Name');
+   * 
+   * // Чётные столбцы
+   * sheet.deleteColumnsByConditional((values, colIndex) => colIndex % 2 === 0);
+   * ```
+   * 
+   * #### Example 2
+   * ```javascript
+   * const sheet = new Sheet('Sheet Name');
+   * 
+   * // Нечётные столбцы и ячейка в строке 3 равна true
+   * sheet.deleteColumnsByConditional((values, colIndex) => colIndex % 2 === 1 && values.Row3 === true, {
+   *   displayValues: false,
+   *   includeFrozenRows: true,
+   *   includeFrozenCols: true,
+   *   output: 'OBJECT_VALUES',
+   *   colNaming: 'COLUMN_POSITION',
+   * });
+   * ```
+   * @param {function} callback Функция, которая будет вызвана для каждой ячейки.
+   * Если функция возвращает `true`, то столбец остаётся, если `false`, то удаляется.
+   * @param {Object} [options = {}] Опции получения данных. Наследуется от `Sheet.getValues()`.
+   */
+  deleteColumnsByConditional(callback, options = {}) {
+    // TODO `deleteColumnsByConditional()`
+    throw new Error(`The method is under development!`);
+
+    if (!arguments.length) {
+      throw new Error(`The parameters () do not match the signature for ${this.constructor.name}.deleteColumnsByConditional.`);
+    }
+
+    if (typeof callback !== 'function') {
+      throw new TypeError('Invalid argument "callback".');
+    }
+
+    if (typeof options !== 'object') {
+      throw new TypeError('Invalid argument "options".');
+    }
+
+    const sheet = this._sheet;
+    const frozenCols = sheet?.getFrozenColumns();
+
+    if (!Number.isInteger(frozenCols)) {
+      throw new TypeError(`Frozen columns is not an integer.`);
+    }
+
+
+    // options.colNaming = 'INDEX';
+    // let values = this.getValues(options);
+
+    return void 0;
+  }
+
+
+
+  /**
+   * Очищает столбцы по условию.
+   * @param {function} callback Функция, которая будет вызвана для каждой ячейки.
+   * Если функция возвращает `true`, то столбец не очищается, если `false`, то очищается.
+   * @param {Object} [options = {}] Параметры для получения данных. Включает в себя опции, унаследованные от `Sheet.getValues()`, а также дополнительные параметры.
+   * @param {boolean} [options.contentsOnly = true] Следует ли очистить содержимое.
+   * @param {boolean} [options.formatOnly = true] Следует ли очистить формат.
+   * @param {boolean} [options.conditionalFormatRulesOnly = false] Следует ли очистить правила условного форматирования.
+   * @param {boolean} [options.notesOnly = false] Следует ли очистить заметки.
+   */
+  clearColumnsByConditional(callback, options = {}) {
+    // TODO `clearColumnsByConditional()`
+    throw new Error(`The method is under development!`);
+  }
+
+
+
+  /**
+   * Обновляет формулы в таблице.
+   * @param {Object} [options] Дополнительные параметры.
+   * @return {void}
+   */
+  updateFormulas(options = {}) {
+    // TODO `updateFormulas()`
+    throw new Error(`The method is under development!`);
+
+    //   var range1 = ss1_sheet_0_link.getRange(2, 1, 2, ss1_sheet_0_link.getMaxColumns());
+    //   var values = range1.getValues();
+    //   var formulas = range1.getFormulas();
+    // setValues
+
+    // SpreadsheetApp.flush();
   }
 
 
